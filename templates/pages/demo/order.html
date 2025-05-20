@@ -1,0 +1,308 @@
+//pages/demo/order.html
+{{ define "content" }}
+<div x-data="orderApp()" x-cloak class="min-h-screen bg-gray-50 p-4 sm:p-8">
+    <div class="max-w-4xl mx-auto">
+        <!-- Header -->
+        <div class="mb-8 text-center">
+            <h1 class="text-2xl font-bold mb-4">{{ .ReferenceID }}</h1>
+            <p class="text-gray-600">{{ .SessionID }}</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Menu List -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-semibold mb-4">Daftar Menu</h2>
+                <div class="space-y-4">
+                    <!-- Loading State -->
+                    <template x-if="isLoading">
+                        <div class="text-center p-4">
+                            <div class="animate-spin inline-block w-6 h-6 border-2 border-current border-t-transparent text-blue-600 rounded-full"></div>
+                            <p class="mt-2 text-gray-600">Memuat menu...</p>
+                        </div>
+                    </template>
+                
+                    <!-- Error State -->
+                    <template x-if="error">
+                        <div class="p-4 bg-red-50 text-red-700 rounded-lg">
+                            <p x-text="error"></p>
+                            <button @click="fetchMenu" class="mt-2 text-red-700 underline">
+                                Coba lagi
+                            </button>
+                        </div>
+                    </template>
+                
+                    <!-- Data Loaded -->
+                    <template x-if="!isLoading && !error">
+                        <div class="space-y-8">
+                            <div class="hs-accordion-group">
+                                
+                                <template x-for="[categoryName, items] of Object.entries(groupedMenu)" :key="categoryName">
+                                    <div class="hs-accordion hs-accordion-active:border-gray-200 bg-white border border-transparent rounded-xl dark:hs-accordion-active:border-neutral-700 dark:bg-neutral-800 dark:border-transparent">
+                                        
+                                        <!-- Button Accordion -->
+                                        <button 
+                                            class="hs-accordion-toggle hs-accordion-active:text-blue-600 inline-flex justify-between items-center gap-x-3 w-full font-semibold text-start text-gray-800 py-4 px-5 hover:text-gray-500 disabled:opacity-50 disabled:pointer-events-none dark:hs-accordion-active:text-blue-500 dark:text-neutral-200 dark:hover:text-neutral-400"
+                                            :id="`hs-accordion-heading-${categoryName.replace(/ /g, '-').toLowerCase()}`"
+                                            :aria-controls="`hs-accordion-collapse-${categoryName.replace(/ /g, '-').toLowerCase()}`">
+                                            
+                                            <span x-text="categoryName"></span>
+                                            <svg class="hs-accordion-active:hidden block size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M5 12h14"></path>
+                                                <path d="M12 5v14"></path>
+                                            </svg>
+                                            <svg class="hs-accordion-active:block hidden size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M5 12h14"></path>
+                                            </svg>
+                                        </button>
+                    
+                                        <!-- Content Accordion -->
+                                        <div 
+                                            :id="`hs-accordion-collapse-${categoryName.replace(/ /g, '-').toLowerCase()}`"
+                                            class="hs-accordion-content hidden w-full overflow-hidden transition-[height] duration-300"
+                                            :aria-labelledby="`hs-accordion-heading-${categoryName.replace(/ /g, '-').toLowerCase()}`">
+                                            
+                                            <div class="pb-4 px-5 space-y-4">
+                                                <template x-for="item in items" :key="item.id">
+                                                    <div class="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+                                                        <div>
+                                                            <h3 class="font-medium" x-text="item.name"></h3>
+                                                            <p class="text-gray-600" x-text="formatCurrency(item.price)"></p>
+                                                        </div>
+                                                        <button 
+                                                            @click="addToCart(item)"
+                                                            class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                                                            Tambah
+                                                        </button>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Cart -->
+            <div class="bg-white rounded-lg shadow-md p-6 h-fit sticky top-4">
+                <h2 class="text-xl font-semibold mb-4">Keranjang Pesanan</h2>
+                
+                <!-- Cart Items -->
+                <template x-if="cart.length === 0">
+                    <p class="text-gray-500 text-center">Belum ada item dipilih</p>
+                </template>
+
+                <div class="space-y-4 mb-6">
+                    <template x-for="(item, index) in cart" :key="item.id">
+                        <div class="flex items-center justify-between p-3 border rounded-lg">
+                            <div class="flex-1">
+                                <h3 class="font-medium" x-text="item.name"></h3>
+                                <div class="flex items-center gap-2 mt-1">
+                                    <button 
+                                        @click="updateQuantity(index, -1)"
+                                        class="text-gray-500 hover:text-gray-700">
+                                        −
+                                    </button>
+                                    <span x-text="item.quantity" class="w-8 text-center"></span>
+                                    <button 
+                                        @click="updateQuantity(index, 1)"
+                                        class="text-gray-500 hover:text-gray-700">
+                                        +
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <p x-text="formatCurrency(item.price * item.quantity)"></p>
+                                <button 
+                                    @click="removeFromCart(index)"
+                                    class="text-red-500 hover:text-red-700 text-sm">
+                                    Hapus
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Total -->
+                <div class="border-t pt-4">
+                    <div class="flex justify-between mb-4">
+                        <span class="font-semibold">Total:</span>
+                        <span x-text="formatCurrency(total)" class="font-semibold"></span>
+                    </div>
+
+                    <!-- Ganti bagian WhatsApp Button dengan ini -->
+                    <button 
+                    @click="submitOrder"
+                    :disabled="cart.length === 0 || submitting"
+                    class="w-full inline-flex items-center justify-center gap-2 bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+
+                    <!-- Icon & Text Normal -->
+                    <svg x-show="!submitting" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M21.5 5h-4.17l-.58.58a1.003 1.003 0 0 1-1.42-1.42l2.5-2.5a1 1 0 0 1 1.42 0l2.5 2.5a1 1 0 0 1-1.42 1.42L21.5 5Zm.5 7a1 1 0 0 0-1 1v6H4V8h10a1 1 0 1 0 0-2H3a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1Z"/>
+                    </svg>
+
+                    <!-- Text Loading -->
+                    <span x-show="!submitting">Pesan Sekarang</span>
+                    <span x-show="submitting" class="flex items-center">
+                        <div class="animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent text-white rounded-full mr-2"></div>
+                        Memproses...
+                    </span>
+                    </button>
+
+                    <!-- Tambahkan Error Message di bawah Cart -->
+                    <template x-if="error">
+                    <div class="p-4 bg-red-50 text-red-700 rounded-lg mt-4">
+                        <p x-text="error"></p>
+                    </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function orderApp() {
+    return {
+        sessionID: "{{ .SessionID }}",
+        menu: [],
+        cart: [],
+        isLoading: true,
+        error: null,
+        submitting: false,
+
+        init() {
+            // Panggil fetch setelah inisialisasi komponen
+            this.$nextTick(() => {
+                this.fetchMenu()
+            })
+        },
+
+        async fetchMenu() {
+            try {
+                console.log("Mulai fetch menu")
+                const response = await fetch('/demo/menu')
+                console.log("Response status:", response.status)
+                const { data } = await response.json()
+                console.log("Data diterima:", data)
+                this.menu = data.map(item => ({
+                    ...item,
+                    price: Number(item.price) // Konversi ke number
+                }))
+
+                if(Array.isArray(data)) {
+                    this.menu = data.map(item => ({
+                        ...item,
+                        price: Number(item.price)
+                    }))
+                } else {
+                    throw new Error('Format data tidak valid')
+                }
+                this.$nextTick(() => {
+                    window.HSStaticMethods.autoInit()
+                })
+            } catch (err) {
+                this.error = err.message
+                this.menu = []
+            } finally {
+                this.isLoading = false
+            }
+        },
+
+        get groupedMenu() {
+            return this.menu.reduce((groups, item) => {
+                const category = item.category || 'Menu'
+                if (!groups[category]) {
+                    groups[category] = []
+                }
+                groups[category].push(item)
+                return groups
+            }, {})
+        },
+        
+        // Computed total
+        get total() {
+            return this.cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
+        },
+
+        // Methods
+        addToCart(item) {
+            const existing = this.cart.find(i => i.id === item.id)
+            if (existing) {
+                existing.quantity++
+            } else {
+                this.cart.push({ ...item, quantity: 1 })
+            }
+        },
+
+        updateQuantity(index, delta) {
+            const newQty = this.cart[index].quantity + delta
+            if (newQty > 0) {
+                this.cart[index].quantity = newQty
+            } else {
+                this.cart.splice(index, 1)
+            }
+        },
+
+        removeFromCart(index) {
+            this.cart.splice(index, 1)
+        },
+
+        formatCurrency(amount) {
+            return new Intl.NumberFormat('id-ID', {
+                style: 'currency',
+                currency: 'IDR',
+                maximumFractionDigits: 0
+            }).format(amount)
+        },
+
+        async submitOrder() {
+            if (this.cart.length === 0) return;
+            this.submitting = true;
+            this.error = null;
+            
+            try {
+                const response = await fetch('/demo/order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(this.cart.map(item => ({
+                        menu_id: item.id,
+                        name: item.name,
+                        price: item.price,
+                        quantity: item.quantity
+                    })))
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Gagal menyimpan pesanan');
+                }
+
+                const data = await response.json();
+                alert(`Pesanan berhasil! ID: ${data.order_id}`);
+                this.cart = []; // Reset keranjang
+            } catch (err) {
+                this.error = err.message;
+            } finally {
+                this.submitting = false;
+            }
+        },
+
+        // Tambahkan di Alpine component
+        headingId(category) {
+            return `heading-${category.replace(/ /g, '-').toLowerCase()}`
+        },
+        collapseId(category) {
+            return `collapse-${category.replace(/ /g, '-').toLowerCase()}`
+        },
+    }
+}
+</script>
+
+<style>
+[x-cloak] { display: none !important; }
+</style>
+{{ end }}

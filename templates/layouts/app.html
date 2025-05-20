@@ -1,0 +1,30 @@
+
+<!doctype html>
+<html lang="en" class="light">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ .Title }}</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+
+    <!-- Mode Development: Vite Client dan Entry -->
+  <script type="module" src="http://localhost:5173/@vite/client"></script>
+  <script type="module" src="http://localhost:5173/src/main.js"></script>
+
+  <!-- Mode Production (comment jika Dev): -->
+  <!--
+    <link rel="stylesheet" href="/dist/assets/style.[hash].css" />
+    <script type="module" src="/dist/assets/main.[hash].js"></script>
+  -->
+  </head>
+  <body class="bg-gray-100 min-h-screen" hx-boost="true">
+    {{ template "partials/top-navbar" . }}
+
+    <main>
+      {{ block "content" . }}{{ end }}
+    </main>
+
+    {{ template "partials/bottom-navbar" . }}
+  </body>
+</html>
