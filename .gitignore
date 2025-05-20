@@ -22,3 +22,57 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Binaries dan file hasil build
+bin/
+*.exe
+*.dll
+*.so
+*.test
+*.out
+
+# Direktori modul Go
+vendor/
+
+# File lingkungan (environment)
+.env
+
+# File IDE
+.vscode/
+.idea/
+
+# Binaries dan file hasil build
+bin/
+*.exe
+*.dll
+*.so
+*.test
+*.out
+
+# Direktori modul Go
+vendor/
+
+# File lingkungan (environment)
+.env
+
+# File IDE
+.vscode/
+.idea/
+
+# Binaries dan file hasil build
+bin/
+*.exe
+*.dll
+*.so
+*.test
+*.out
+
+# Direktori modul Go
+vendor/
+
+# File lingkungan (environment)
+.env
+
+# File IDE
+.vscode/
+.idea/
