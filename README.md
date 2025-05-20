@@ -1,3 +1,6 @@
+Go + HTMX + Tailwind + Alpine JS + Preline UI
+
+
 yasr/
 ├── internal/
 │   └── api/
