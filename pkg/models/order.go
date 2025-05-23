@@ -4,6 +4,7 @@ package models
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -14,15 +15,16 @@ type OrderSession struct {
 	Status      string `gorm:"size:50;default:'pending'"`
 	CreatedAt   time.Time
 	ExpiredAt   time.Time
-	Items       []OrderItem `gorm:"foreignKey:SessionID;references:SessionID"`
+	Items       []OrderItem `gorm:"foreignKey:OrderSessionID;references:ID"`
 	Total       int         `gorm:"default:0"`
 }
 
 type OrderItem struct {
 	gorm.Model
-	SessionID string `gorm:"size:255"`
-	Name      string
-	Quantity  int
-	Price     int
-	Subtotal  int
+	OrderSessionID uint      `json:"-"`
+	ProductUUID    uuid.UUID `gorm:"type:uuid;not null" json:"product_uuid"`
+	Name           string    `gorm:"size:255;not null" json:"name"`
+	Quantity       int       `gorm:"not null" json:"quantity"`
+	Price          int       `gorm:"not null" json:"price"`
+	Subtotal       int       `gorm:"not null" json:"subtotal"`
 }

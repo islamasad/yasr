@@ -36,7 +36,7 @@
                         <div class="space-y-8">
                             <div class="hs-accordion-group">
                                 
-                                <template x-for="[categoryName, items] of Object.entries(groupedMenu)" :key="categoryName">
+                                <template x-for="[categoryName, items] of Object.entries(groupedMenu)" :key="categoryName + '-' + items[0]?.uuid">
                                     <div class="hs-accordion hs-accordion-active:border-gray-200 bg-white border border-transparent rounded-xl dark:hs-accordion-active:border-neutral-700 dark:bg-neutral-800 dark:border-transparent">
                                         
                                         <!-- Button Accordion -->
@@ -62,7 +62,7 @@
                                             :aria-labelledby="`hs-accordion-heading-${categoryName.replace(/ /g, '-').toLowerCase()}`">
                                             
                                             <div class="pb-4 px-5 space-y-4">
-                                                <template x-for="item in items" :key="item.id">
+                                                <template x-for="item in items" :key="item.uuid"> <!-- Gunakan uuid sebagai key -->
                                                     <div class="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
                                                         <div>
                                                             <h3 class="font-medium" x-text="item.name"></h3>
@@ -95,7 +95,7 @@
                 </template>
 
                 <div class="space-y-4 mb-6">
-                    <template x-for="(item, index) in cart" :key="item.id">
+                    <template x-for="(item, index) in cart" :key="item.uuid">
                         <div class="flex items-center justify-between p-3 border rounded-lg">
                             <div class="flex-1">
                                 <h3 class="font-medium" x-text="item.name"></h3>
@@ -174,67 +174,85 @@ function orderApp() {
         submitting: false,
 
         init() {
-            // Panggil fetch setelah inisialisasi komponen
-            this.$nextTick(() => {
-                this.fetchMenu()
+            this.fetchMenu();
+            
+            // Init HS Accordion setelah komponen ter-render
+            this.$watch('menu', () => {
+                this.$nextTick(() => {
+                    window.HSStaticMethods.autoInit();
+                })
             })
         },
 
         async fetchMenu() {
-            try {
-                console.log("Mulai fetch menu")
-                const response = await fetch('/demo/menu')
-                console.log("Response status:", response.status)
-                const { data } = await response.json()
-                console.log("Data diterima:", data)
-                this.menu = data.map(item => ({
-                    ...item,
-                    price: Number(item.price) // Konversi ke number
-                }))
-
-                if(Array.isArray(data)) {
-                    this.menu = data.map(item => ({
-                        ...item,
-                        price: Number(item.price)
-                    }))
-                } else {
-                    throw new Error('Format data tidak valid')
-                }
-                this.$nextTick(() => {
-                    window.HSStaticMethods.autoInit()
-                })
-            } catch (err) {
-                this.error = err.message
-                this.menu = []
-            } finally {
-                this.isLoading = false
-            }
-        },
-
-        get groupedMenu() {
-            return this.menu.reduce((groups, item) => {
-                const category = item.category || 'Menu'
-                if (!groups[category]) {
-                    groups[category] = []
-                }
-                groups[category].push(item)
-                return groups
-            }, {})
-        },
+    try {
+        this.isLoading = true;
+        this.error = null;
         
+        const response = await fetch('/demo/menu');
+        const { data } = await response.json();
+        
+        if (!Array.isArray(data)) {
+            throw new Error('Format data tidak valid');
+        }
+
+        if (data.length === 0) {
+            this.error = "Menu belum tersedia";
+            this.menu = [];
+            return;
+        }
+
+        this.menu = data.map(item => ({
+            uuid: item.uuid,
+            name: item.name,
+            price: Number(item.price),
+            category: item.category || 'Lainnya'
+        }));
+
+        // Force re-init accordion
+        this.$nextTick(() => {
+            window.HSStaticMethods.autoInit();
+        });
+
+    } catch (err) {
+        this.error = err.message || 'Gagal memuat menu';
+        console.error('Fetch error:', err);
+    } finally {
+        this.isLoading = false;
+    }
+},
+        get groupedMenu() {
+            const groups = this.menu.reduce((acc, item) => {
+                const category = item.category;
+                if (!acc[category]) {
+                    acc[category] = [];
+                }
+                acc[category].push(item);
+                return acc;
+            }, {});
+
+            console.log("Grouped Menu:", groups); // Debug grouping
+            return groups;
+        },
+
+        addToCart(item) {
+            const existing = this.cart.find(i => i.uuid === item.uuid);
+            if (existing) {
+                existing.quantity++;
+            } else {
+                this.cart.push({ 
+                    uuid: item.uuid,
+                    name: item.name,
+                    price: item.price,
+                    quantity: 1 
+                });
+            }
+            console.log("Cart updated:", this.cart);
+        },
+
         // Computed total
         get total() {
             return this.cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
-        },
-
-        // Methods
-        addToCart(item) {
-            const existing = this.cart.find(i => i.id === item.id)
-            if (existing) {
-                existing.quantity++
-            } else {
-                this.cart.push({ ...item, quantity: 1 })
-            }
         },
 
         updateQuantity(index, delta) {
@@ -267,21 +285,18 @@ function orderApp() {
                 const response = await fetch('/demo/order', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
                     body: JSON.stringify(this.cart.map(item => ({
-                        menu_id: item.id,
-                        name: item.name,
-                        price: item.price,
+                        product_uuid: item.uuid, // Gunakan uuid bukan id
                         quantity: item.quantity
                     })))
                 });
 
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || 'Gagal menyimpan pesanan');
-                }
-
-                const data = await response.json();
+                const text = await response.text(); // Baca sebagai text dulu
+        if (!text) {
+            throw new Error('Empty response from server');
+        }
+        
+        const data = JSON.parse(text);
                 alert(`Pesanan berhasil! ID: ${data.order_id}`);
                 this.cart = []; // Reset keranjang
             } catch (err) {

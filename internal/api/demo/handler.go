@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -95,26 +96,17 @@ func getAbsoluteURL(c *gin.Context, path string) string {
 }
 
 func MenuHandler(c *gin.Context) {
-	menu := getDemoMenu()
+	db := c.MustGet("db").(*gorm.DB)
 
-	type MenuItem struct {
-		ID       int    `json:"id"`
-		Name     string `json:"name"`
-		Price    int    `json:"price"`
-		Category string `json:"category"`
+	var products []models.Product
+	result := db.Find(&products)
+
+	if result.Error != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil menu"})
+		return
 	}
 
-	var response []MenuItem
-	for _, m := range menu {
-		response = append(response, MenuItem{
-			ID:       m["id"].(int),
-			Name:     m["name"].(string),
-			Price:    m["price"].(int),
-			Category: m["category"].(string),
-		})
-	}
-
-	c.JSON(200, gin.H{"data": response})
+	c.JSON(200, gin.H{"data": products})
 }
 
 // Contoh data menu
@@ -147,44 +139,44 @@ func getDemoMenu() []map[string]interface{} {
 	}
 }
 
+// internal/api/demo/handler.go
 func SubmitOrderHandler(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	session := sessions.Default(c)
-
-	log.Println("Session di submit:", session.Get("session_id"))
 
 	// Validasi session
 	sessionID := session.Get("session_id")
 	referenceID := session.Get("reference_id")
 	createdAt := session.Get("created_at")
 
-	log.Println("Session keys:", session.Get("session_id"), session.Get("reference_id"), session.Get("created_at"))
-
 	if sessionID == nil || referenceID == nil || createdAt == nil {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Session tidak valid"})
 		return
 	}
 
-	// Bind data dari form
-	var orderItems []models.OrderItem
-	if err := c.ShouldBindJSON(&orderItems); err != nil { // Ganti ke ShouldBindJSON
+	// Konversi created_at ke Unix timestamp
+	createdAtUnix, ok := createdAt.(int64)
+	if !ok {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Format waktu tidak valid"})
+		return
+	}
+
+	var requestItems []struct {
+		ProductUUID string `json:"product_uuid"`
+		Quantity    int    `json:"quantity"`
+	}
+
+	if err := c.ShouldBindJSON(&requestItems); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Hitung subtotal untuk setiap item
-	for i := range orderItems {
-		orderItems[i].Subtotal = orderItems[i].Price * orderItems[i].Quantity // Diubah dari Total ke Subtotal
-		orderItems[i].SessionID = sessionID.(string)
+	// Validasi cart tidak kosong
+	if len(requestItems) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Keranjang belanja kosong"})
+		return
 	}
 
-	// Hitung total order
-	var total int
-	for _, item := range orderItems {
-		total += item.Subtotal // Menggunakan Subtotal untuk kalkulasi
-	}
-
-	// Simpan ke database menggunakan transaction
 	tx := db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -192,14 +184,50 @@ func SubmitOrderHandler(c *gin.Context) {
 		}
 	}()
 
+	// Hitung total dan siapkan order items
+	var total int
+	var orderItems []models.OrderItem
+
+	for _, reqItem := range requestItems {
+		// Parse UUID
+		productUUID, err := uuid.Parse(reqItem.ProductUUID)
+		if err != nil {
+			tx.Rollback()
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "UUID produk tidak valid"})
+			return
+		}
+
+		// Dapatkan info produk
+		var product models.Product
+		if err := tx.Where("uuid = ?", productUUID).First(&product).Error; err != nil {
+			tx.Rollback()
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Produk tidak ditemukan"})
+			return
+		}
+
+		// Hitung subtotal
+		subtotal := product.Price * reqItem.Quantity
+		total += subtotal
+
+		orderItems = append(orderItems, models.OrderItem{
+			ProductUUID: productUUID,
+			Name:        product.Name,
+			Price:       product.Price,
+			Quantity:    reqItem.Quantity,
+			Subtotal:    subtotal,
+		})
+	}
+
+	// Buat order session
 	orderSession := models.OrderSession{
 		SessionID:   sessionID.(string),
 		ReferenceID: referenceID.(string),
-		CreatedAt:   createdAt.(time.Time),
+		CreatedAt:   time.Unix(createdAtUnix, 0),
 		ExpiredAt:   time.Now().Add(24 * time.Hour),
-		Items:       orderItems,
 		Total:       total,
+		Items:       orderItems,
 	}
+
 	if err := tx.Create(&orderSession).Error; err != nil {
 		tx.Rollback()
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan order"})
@@ -207,6 +235,9 @@ func SubmitOrderHandler(c *gin.Context) {
 	}
 
 	tx.Commit()
+
+	// Broadcast ke client
+	BroadcastNewOrder(orderSession)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "Order berhasil disimpan",
@@ -251,4 +282,99 @@ func GetOrdersHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, orders)
+}
+
+// internal/api/demo/handler.go
+func OrderStreamHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+
+	clientChan := make(chan models.OrderSession, 10)
+	defer close(clientChan)
+
+	registerClient(clientChan)
+	defer unregisterClient(clientChan)
+
+	go func() {
+		<-c.Writer.CloseNotify()
+		unregisterClient(clientChan)
+	}()
+
+	// Kirim data awal
+	for _, order := range getInitialOrders(db) {
+		sendOrderEvent(c, order)
+		c.Writer.Flush()
+	}
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case order := <-clientChan:
+			sendOrderEvent(c, order)
+			c.Writer.Flush()
+		case <-ticker.C:
+			c.SSEvent("ping", nil)
+			c.Writer.Flush()
+		}
+	}
+}
+
+func sendOrderEvent(c *gin.Context, order models.OrderSession) {
+	data := map[string]interface{}{
+		"id":         order.ID,
+		"created_at": order.CreatedAt.Format(time.RFC3339),
+		"items":      order.Items,
+		"total":      order.Total,
+		"status":     order.Status,
+	}
+	c.SSEvent("message", data)
+}
+
+// Fungsi helper untuk broadcast
+var clients = make(map[chan models.OrderSession]bool)
+var mutex sync.Mutex
+
+func registerClient(clientChan chan models.OrderSession) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	clients[clientChan] = true
+}
+
+func unregisterClient(clientChan chan models.OrderSession) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	delete(clients, clientChan)
+}
+
+// Fungsi untuk mengirim update order baru ke semua client
+func BroadcastNewOrder(order models.OrderSession) {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	for client := range clients {
+		select {
+		case client <- order: // Non-blocking send
+		default:
+			log.Println("Client channel full, skipping")
+		}
+	}
+}
+
+func getInitialOrders(db *gorm.DB) []models.OrderSession {
+	var orders []models.OrderSession
+	result := db.Preload("Items").
+		Order("created_at DESC").
+		Limit(50). // Batasi 50 order terakhir
+		Find(&orders)
+
+	if result.Error != nil {
+		log.Printf("Error fetching initial orders: %v", result.Error)
+		return []models.OrderSession{}
+	}
+	return orders
 }

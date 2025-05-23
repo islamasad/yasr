@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"yasr/internal/api"
+	"yasr/internal/database"
 	"yasr/pkg/models"
 	"yasr/pkg/templates"
 )
@@ -24,45 +25,156 @@ import (
 func main() {
 	_ = godotenv.Load()
 
-	// Database setup
+	// Handle command line arguments
+	if len(os.Args) > 1 {
+		commandHandled := handleCommands()
+		if commandHandled {
+			return // Hentikan eksekusi jika command valid
+		}
+	}
+
+	// Jika tidak ada argumen, jalankan server
 	db := setupDatabase()
 
-	// Gin setup
 	r := setupGinEngine()
 
-	// Session middleware
 	setupSessions(r)
 
-	// Templates
 	r.HTMLRender = templates.SetupTemplates()
 
-	// Setup routes
 	api.SetupRoutes(r, db)
 
-	// Start server
 	startServer(r)
 }
 
+func handleCommands() bool {
+	cmd := os.Args[1]
+	switch cmd {
+	case "--reset-db":
+		resetDatabase()
+		return true
+	case "--seed":
+		seedDatabase()
+		return true // Akan exit di dalam seedDatabase()
+	default:
+		log.Printf("Command tidak dikenali: %s", cmd)
+		return false
+	}
+}
+
+func resetDatabase() {
+	dbName := os.Getenv("DB_NAME")
+
+	err := database.DropDatabase(dbName)
+	if err != nil {
+		log.Printf("Gagal reset database: %v", err)
+		return
+	}
+
+	err = database.CreateDatabase(dbName)
+	if err != nil {
+		log.Printf("Gagal create database: %v", err)
+		return
+	}
+
+	db := setupDatabase()
+	database.Seed(db)
+	log.Println("Reset database berhasil")
+}
+
+func seedDatabase() {
+	db := setupDatabase()
+
+	// Tambahkan log awal
+	log.Println("Memulai proses seeding...")
+
+	database.Seed(db)
+
+	// Verifikasi data
+	var count int64
+	db.Model(&models.Product{}).Count(&count)
+	log.Printf("Seeding selesai. Total produk: %d", count)
+
+	// Exit setelah selesai
+	os.Exit(0)
+}
+
 func setupDatabase() *gorm.DB {
+	dbName := os.Getenv("DB_NAME")
+
+	// Step 1: Coba connect ke database target
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s dbname=%s password=%s sslmode=disable",
-		os.Getenv("DB_HOST"), os.Getenv("DB_PORT"),
-		os.Getenv("DB_USER"), os.Getenv("DB_NAME"),
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_USER"),
+		dbName,
 		os.Getenv("DB_PASSWORD"),
 	)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err == nil {
+		return runMigrations(db)
+	}
+
+	// Step 2: Jika database tidak ada, buat database baru
+	log.Println("Database tidak ditemukan, mencoba membuat database baru...")
+
+	// Connect ke database default postgres
+	adminDsn := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s sslmode=disable",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+	)
+
+	adminDb, err := gorm.Open(postgres.Open(adminDsn), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("failed to connect database: %v", err)
+		log.Fatalf("Gagal connect ke postgres: %v", err)
 	}
 
-	if err := db.AutoMigrate(
+	// Check apakah database sudah ada
+	var exists bool
+	adminDb.Raw(
+		"SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = ?)",
+		dbName,
+	).Scan(&exists)
+
+	if !exists {
+		// Create database
+		err = adminDb.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)).Error
+		if err != nil {
+			log.Fatalf("Gagal membuat database: %v", err)
+		}
+		log.Printf("Database %s berhasil dibuat", dbName)
+	}
+
+	// Step 3: Connect ke database yang baru dibuat
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Gagal connect setelah membuat database: %v", err)
+	}
+
+	return runMigrations(db)
+}
+
+func runMigrations(db *gorm.DB) *gorm.DB {
+	// Auto migrate models
+	err := db.AutoMigrate(
 		&models.User{},
+		&models.Product{},
 		&models.OrderSession{},
-		&models.OrderItem{}); err != nil {
-		log.Fatalf("migrate failed: %v", err)
+		&models.OrderItem{},
+	)
+	if err != nil {
+		log.Fatalf("Migrasi gagal: %v", err)
 	}
 
+	// Tambahkan extension UUID jika belum ada
+	db.Exec("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+
+	log.Println("Database siap digunakan")
 	return db
 }
 

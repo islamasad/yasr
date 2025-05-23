@@ -21,5 +21,6 @@ func RegisterDemoRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		demoGroup.GET("/menu", MenuHandler)
 		demoGroup.POST("/order", SubmitOrderHandler)
 		demoGroup.PUT("/orders/:id/status", UpdateOrderStatus)
+		demoGroup.GET("/orders/stream", OrderStreamHandler)
 	}
 }
